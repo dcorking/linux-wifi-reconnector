@@ -15,7 +15,7 @@
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 # WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+# DISCLAIMED. IN NO EVENT SHALL NOFUTZ NETWORKS INC. BE LIABLE FOR ANY
 # DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
 # (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
 # LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
@@ -26,7 +26,7 @@
 #
 # Description:
 # 
-# The purpose of this script is to reconnect to a Wifi access point with a
+# The purpose of this script is to reconnect to a WiFi access point with a
 # strong signal. This doesn't make sense in most setups. But if you have
 # a slightly complicated setup with servers that should only be accessed
 # from a subset of machines that are cleared to access your non-open
@@ -42,9 +42,9 @@
 #                             |                  -----------         
 #                             |    --------------| WifiOne |
 #  Internet                   |   | 10.0.0.0/27  -----------
-# -----------            ------------------
-# | FIOS    |-1.2.3.0/30-| Gateway w/DHCP |
-# -----------            ------------------ 
+# -----------            -------------------------
+# | FIOS    |-1.2.3.0/30-| Gateway/bridge w/DHCP |
+# -----------            ------------------------- 
 #                             | |  | 10.0.0.0/27 -----------
 #                             | |  --------------| WifiTwo |
 #                             | |                -----------
@@ -62,28 +62,36 @@
 # boxes everywhere.  The guest networks are accessible to all boxes
 # (including friends and children) within range.
 # 
-# Now the roaming isn't so easy for the ueberboxes. While, one can easily
-# configure iptables on the gateway to work out the access policies, e.g.,
+# Now roaming isn't so easy for the ueberboxes. While one can easily
+# configure iptables on the gateway to work out access policies, e.g.,
 # no box on the port from our GuestOne|Two can initiate connections to internal
-# machines. The problem happens when the admin may walks to the kitchen
+# machines, but existing ones may continue and so on.
+#
+# The problem happens when the admin may walks to the kitchen
 # for a cup of coffee. Now, because of neighbor network interference and
 # and proximity it may sometimes be best for the ueberbox to hop onto the
 # Guest network to keep existing connections alive. New ssh connections to
-# internal servers couldn't be initiated during this time but keeping
-# alive those connections that already exist is useful.
+# internal servers cannot be initiated during this time but we keep
+# alive those connections that already exist.
 #
-# Prerequisite
+# Prerequisites:
 # Network manager, iwconfig
 #
-# Function
-# This script is installed on a client machine and typically run periodically.
-# If the machine is connected to a preferred network with sufficient signal
-# strength, there is no action taken. If there is a preferred network with
-# better strength in reach the machine will reconnect to that network. If
-# there is no preferred network with sufficient signal strength the laptop
-# will reconnect to the strongest non-preferred network. To force switching
-# between networks in the same preferredness category the singal strength
-# must differ at least by --signal_quality_threshold
+# Function:
+# This script is installed on a client machine and typically run periodically
+# or on frustration. If the machine is connected to a preferred network with
+# sufficient signal strength, there is no action taken. If there is a
+# preferred network with better signal strength the client will reconnect to
+# that network. If there is no preferred network with sufficient signal
+# strength the client will reconnect to the strongest non-preferred network.
+# To force switching between networks in the same preferredness category the
+# singal strength must differ at least by --signal_quality_threshold
+#
+# If the script is run periodically in the background via cron, then it
+# can be blocked from taking action by invoking the command with the --lock
+# argument. The script will continue upon a call to --unlock. This can be
+# useful if you need to be on the preferred network despite suffering from
+# poor signal.
 #
 # Compatibility:
 #   Ubuntu 14.04 (to adapt you might have to twiddle path names)
@@ -96,20 +104,21 @@
 #                                  --signal_quality_delta_threshold=10 \
 #                                  --unlock --lockfile /tmp/wifi-reconnect.lock
 #
-#   The above command says run as root wifi-reconnector.py. The preferred
-#   networks are "prefer_me" and "me_too". The other networks that are
+#   The above command says run wifi-reconnector.py. The preferred
+#   networks are "prefer_me" and "me_too." The other networks that are
 #   usable but not preferred are "guest_one" and "guest_two." Don't consider
-#   connecting to networks which have less thatn 50% signal quality (test your
+#   connecting to networks which have less than 50% signal quality (test your
 #   own acceptance levels) and don't switch unless the gain in signal quality
 #   is at least 10%. If the reconnection script is locked, unlock it using
 #   the file /tmp/wifi-reconnect.lock as our lockfile.
 #
 # Installation in crontab:
 #   By far the most convenient/dangerous mode. The script unfortunately requires
-#   root. The iwconfig tools need it. Best would be to run the script in a jail
+#   root for iwconfig. Best would be to run the script in a jail
 #   for automation purposes.  A less safe way is sketched below.
 #
-#   Do this at your own risk
+#   Do this at your own risk:
+#
 #     sudo chmod +s /sbin/iwconfig
 #     sudo chmod +s /sbin/iwlist
 #
@@ -223,8 +232,12 @@ def bail_with_message(text):
     """Exits the process after printing ERROR: and text which is assumed
     to be a string.
     """
-    sys.stderr.write("ERROR: %s\n" % text);
+    now = time.time()
+    now_string = datetime.datetime.fromtimestamp(now).strftime(
+        '%Y%m%d-%H:%M:%S')
+    sys.stderr.write("%s: ERROR: %s\n" % (now_string, text))
     sys.exit(-1)
+
 
 def print_with_timestamp(text):
     """Prints the string text after a timestamp prefix
@@ -233,6 +246,7 @@ def print_with_timestamp(text):
     now_string = datetime.datetime.fromtimestamp(now).strftime(
         '%Y%m%d-%H:%M:%S')
     print "%s: %s" % (now_string, text)
+
 
 def run_command_or_die(command):
     """Runs the command which is given as a list of commandline arguments.
@@ -248,7 +262,7 @@ def run_command_or_die(command):
     except OSError as err:
         bail_with_message("Failed to find or execute %s." % command[0])
     except subprocess.CalledProcessError:
-        bail_with_messsage("Wifi scanning failed.");
+        bail_with_messsage("Program failure %s." % command[0]);
 
 
 def match_iwlist_v30_output(output):
@@ -416,6 +430,7 @@ def scan_wifi(wlans):
 def get_active_wlan():
     """Runs iwconfig to determine the WLAN to which the interface is configured
     """
+    global interface
     command = [ IWCONFIG, interface]
     outs, errs = run_command_or_die(command)
     return match_iwconfig_v30_essid(outs.split('\n'))
@@ -524,7 +539,9 @@ def get_path_full_or_relative_to_home(filename):
 def process_prescan_commands():
     """Runs any command that has nothing to do with scanning, i.e., 
     locking and unlocking this script.  Fails if the command couldn't
-    be run.
+    be run (the process exits). Returns true if the command processing
+    should be considered complete by the caller. Returns false if
+    nothing was done by this function.
     """
     global lock
     global lockfile
@@ -559,6 +576,7 @@ def main():
     global dry_run
     global non_preferred_wlans
     global preferred_wlans
+
     parse_commandline_args()
 
     if process_prescan_commands():
@@ -567,6 +585,7 @@ def main():
     scanned_wifi = scan_wifi(preferred_wlans)
     active_wifi = get_active_wlan()
     better_wifi = find_better_wifi(active_wifi, scanned_wifi)
+
     if not (better_wifi == active_wifi):
         if not dry_run:
             print_with_timestamp(
