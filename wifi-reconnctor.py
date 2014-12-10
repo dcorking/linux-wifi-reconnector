@@ -122,13 +122,15 @@
 #     sudo chmod +s /sbin/iwconfig
 #     sudo chmod +s /sbin/iwlist
 #
-#   Append something like the follwoing line to your crontab (e.g., call
-#   crontab -e):
-#   
-#   1-59/5 0-23 * * * $HOME/bin/wifi-reconnctor.py --preferred='"sec1","sec2"'\
+#   Now run this from a terminal or anything that has access to your
+#   keyring. Running in cron doesn't actually work unless you rig your
+#   keymanager so periodic tasks can get access to the nm applet.
+#
+#   xterm -T wifi-reconnector -fg yellow -bg darkblue \
+#     -e $HOME/bin/wifi-reconnctor.py --preferred='"sec1","sec2"'\
 #     --not_preferred='"open1","open2"' --signal_quality_threshold=50\
 #     --signal_quality_delta_threshold=10 --lockfile /tmp/reconnect.lock\
-#     >> $HOME/tmp/wifi-reconnector.log 2>&1 
+#     --sleep_between_checks 180 &
 
 import csv
 import datetime
@@ -149,6 +151,7 @@ preferred_wlans = []
 signal_quality_delta_threshold = .15
 signal_quality_lower_bound = .5
 signal_quality_threshold = .5
+sleep_between_checks = 0
 unlock = False
 
 # Distribution specific constants (Ubuntu 14.04)
@@ -178,6 +181,8 @@ def print_help():
     print "    causes us disassociate from a network\n" 
     print "  --interface <ifname>: which interface is wlan (default wlan0)\n"
     print "  --dry_run:  don't do anything just dump what would be done.\n"
+    print "  --sleep_between_checks: seconds between checks, unset or 0 to"\
+          " exit immediately."
     print "  --lockfile: path to lockfile. A path starting with \'/\' is"
     print "    absolute, without it is concatenated after $HOME\n"
     print "  --lock: lock the reconnector\n"
@@ -358,6 +363,7 @@ def parse_commandline_args():
     global preferred_wlans
     global signal_quality_delta_threshold
     global signal_quality_threshold
+    global sleep_between_checks
     global unlock
 
     try:
@@ -365,6 +371,7 @@ def parse_commandline_args():
                                    "h", ["help",
                                          "signal_quality_threshold=",
                                          "signal_quality_delta_threshold=",
+                                         "sleep_between_checks=",
                                          "preferred=",
                                          "not_preferred=",
                                          "lockfile=",
@@ -377,6 +384,8 @@ def parse_commandline_args():
                 sys.exit(0)
             if option == "--lockfile":
                 lockfile = value
+            if option == "--sleep_between_checks":
+                sleep_between_checks = int(value)
             if option == "--lock":
                 lock = True
             if option == "--unlock":
@@ -576,26 +585,35 @@ def main():
     global dry_run
     global non_preferred_wlans
     global preferred_wlans
+    global sleep_between_checks
 
     parse_commandline_args()
 
-    if process_prescan_commands():
-        return  # we already did work
+    while (True):
+        if process_prescan_commands():
+            if (sleep_between_checks == 0):
+                break
+            time.sleep(sleep_between_checks)
+            continue  # we already did work
 
-    scanned_wifi = scan_wifi(preferred_wlans)
-    active_wifi = get_active_wlan()
-    better_wifi = find_better_wifi(active_wifi, scanned_wifi)
+        scanned_wifi = scan_wifi(preferred_wlans)
+        active_wifi = get_active_wlan()
+        better_wifi = find_better_wifi(active_wifi, scanned_wifi)
 
-    if not (better_wifi == active_wifi):
-        if not dry_run:
-            print_with_timestamp(
-                "Switching active wifi %s -> %s " % (active_wifi, better_wifi))
-            activate_wifi(better_wifi)
+        if not (better_wifi == active_wifi):
+            if not dry_run:
+                print_with_timestamp(
+                    "Switching active wifi %s -> %s "
+                    % (active_wifi, better_wifi))
+                activate_wifi(better_wifi)
+            else:
+                print_with_timestamp("activate_wifi(%s)" % better_wifi)
         else:
-            print_with_timestamp("activate_wifi(%s)" % better_wifi)
-    else:
-        print_with_timestamp("Staying on %s" % active_wifi)
-    
+            print_with_timestamp("Staying on %s" % active_wifi)
+        if (sleep_between_checks == 0):
+            break
+        time.sleep(sleep_between_checks)
+    print "exit wifi check loop"
 
 if __name__ == "__main__":
     main()
